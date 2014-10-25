@@ -57,5 +57,3 @@ recv_till_http_eoh(Sock) ->
 		http_eoh -> ok;
 		_ -> recv_till_http_eoh(Sock)
 	end.
-
-%	{ok, ProxyListenSock} = ssl:listen(8083, [{cacertfile, "/home/dnet/.mitmproxy/mitmproxy-ca.pem"}]).
