@@ -6,6 +6,8 @@
 -define(CA_CERT_FILE, "burpcert-fixed.pem").
 -define(PRIV_KEY_FILE, "mitmkey.pem").
 
+-record(cert, {cn, der}).
+
 start() ->
 	application:start(crypto),
 	application:start(asn1),
@@ -13,23 +15,36 @@ start() ->
 	application:start(ssl),
 	{ok, ProxyListenSock} = gen_tcp:listen(?LISTEN_PORT, [binary,
 		{active, false}, {packet, http}, {reuseaddr, true}]),
-	acceptor(ProxyListenSock, undefined).
+	Certs = ets:new(certs, [{keypos, #cert.cn}, public]),
+	acceptor(ProxyListenSock, [{certs, Certs}]).
 
 acceptor(ProxyListenSock, Config) ->
 	{ok, Sock} = gen_tcp:accept(ProxyListenSock),
-	gen_tcp:controlling_process(ProxyListenSock, spawn(?MODULE, acceptor, [ProxyListenSock, Config])),
+	Certs = proplists:get_value(certs, Config),
+	Heir = spawn(?MODULE, acceptor, [ProxyListenSock, Config]),
+	ets:setopts(Certs, {heir, Heir, undefined}),
+	gen_tcp:controlling_process(ProxyListenSock, Heir),
 	{Host, Port} = get_target(Sock),
 	io:format("HOST: ~p PORT: ~p\n", [Host, Port]),
 	inet:setopts(Sock, [{packet, raw}]),
 	gen_tcp:send(Sock, <<"HTTP/1.1 200 Connection established\r\n"
 						 "Proxy-agent: sslproxy\r\n\r\n">>),
-	{ok, SslSocket} = ssl:ssl_accept(Sock, [{cert, get_cert_for_host(Host)},
+	{ok, SslSocket} = ssl:ssl_accept(Sock, [{cert, get_cert_for_host(Host, Certs)},
 											{keyfile, ?PRIV_KEY_FILE}]),
 	io:format("~p", [ssl:recv(SslSocket, 0)]), % XXX
 	ssl:send(SslSocket, <<"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n"
 		"Content-Length: 3\r\n\r\nfoo">>). % TODO connect to remote and bridge
 
-get_cert_for_host(Host) -> % TODO cache certificates, avoid cmd inject in host
+get_cert_for_host(Host, Certs) -> % TODO avoid cmd inject in host
+	case ets:lookup(Certs, Host) of
+		[C] -> C#cert.der;
+		[] ->
+			DER = gen_cert_for_host(Host),
+			ets:insert(Certs, #cert{cn=Host, der=DER}),
+			DER
+	end.
+
+gen_cert_for_host(Host) ->
 	CertCommand = "openssl req -new -key " ?PRIV_KEY_FILE " -batch "
 			"-subj \"/CN=" ++ Host ++ "/OU=SSL Proxy/O=SSL Proxy/C=HU/\" "
 			"| openssl x509 -req -days 3650 -CA " ?CA_CERT_FILE
