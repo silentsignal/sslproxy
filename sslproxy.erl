@@ -1,5 +1,5 @@
 -module(sslproxy).
--export([start/0, acceptor/2]).
+-export([start/0, acceptor/1]).
 
 -define(LISTEN_PORT, 8083).
 -define(CA_KEY_FILE, "burpkey.pem").
@@ -15,14 +15,15 @@ start() ->
 	application:start(ssl),
 	{ok, ProxyListenSock} = gen_tcp:listen(?LISTEN_PORT, [binary,
 		{active, false}, {packet, http}, {reuseaddr, true}]),
-	Certs = ets:new(certs, [{keypos, #cert.cn}, public]),
-	acceptor(ProxyListenSock, [{certs, Certs}]).
+	acceptor(ProxyListenSock).
 
-acceptor(ProxyListenSock, Config) ->
+acceptor(ProxyListenSock) ->
+	Certs = receive
+		{'ETS-TRANSFER', C, Parent, undefined} when is_pid(Parent) -> C
+	after 0 -> ets:new(certs, [{keypos, #cert.cn}, public]) end,
 	{ok, Sock} = gen_tcp:accept(ProxyListenSock),
-	Certs = proplists:get_value(certs, Config),
-	Heir = spawn(?MODULE, acceptor, [ProxyListenSock, Config]),
-	ets:setopts(Certs, {heir, Heir, undefined}),
+	Heir = spawn(?MODULE, acceptor, [ProxyListenSock]),
+	ets:give_away(Certs, Heir, undefined),
 	gen_tcp:controlling_process(ProxyListenSock, Heir),
 	{Host, Port} = get_target(Sock),
 	io:format("HOST: ~p PORT: ~p\n", [Host, Port]),
