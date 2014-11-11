@@ -51,7 +51,8 @@ gen_cert_for_host(Host) ->
 			"| openssl x509 -req -days 3650 -CA " ?CA_CERT_FILE
 			" -CAkey " ?CA_KEY_FILE " -CAcreateserial -outform DER 2>/dev/null",
 	Port = erlang:open_port({spawn, CertCommand}, [exit_status, binary]),
-	collect_cert(Port).
+	Cert = collect_cert(Port),
+	receive {'EXIT', Port, normal} -> Cert end.
 
 validate_hostname([]) -> ok;
 validate_hostname([Char | Rest]) when (Char >= $0 andalso Char =< $9);
