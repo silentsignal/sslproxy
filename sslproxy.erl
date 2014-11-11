@@ -31,10 +31,39 @@ acceptor(ProxyListenSock) ->
 	gen_tcp:send(Sock, <<"HTTP/1.1 200 Connection established\r\n"
 						 "Proxy-agent: sslproxy\r\n\r\n">>),
 	{ok, SslSocket} = ssl:ssl_accept(Sock, [{cert, get_cert_for_host(Host, Certs)},
-											{keyfile, ?PRIV_KEY_FILE}]),
-	io:format("~p", [ssl:recv(SslSocket, 0)]), % XXX
-	ssl:send(SslSocket, <<"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n"
-		"Content-Length: 3\r\n\r\nfoo">>). % TODO connect to remote and bridge
+											{keyfile, ?PRIV_KEY_FILE},
+											{active, true}, {packet, raw}]),
+	case ssl:connect(Host, Port, [{verify, verify_none}, {packet, raw},
+								  {active, true}, {mode, binary}]) of
+		{ok, TargetSock} ->
+			{ok, Data} = ssl:recv(SslSocket, 0), % XXX
+			self() ! {ssl, SslSocket, Data},
+			forwarder(SslSocket, TargetSock);
+		{error, Reason} -> io:format("Couldn't connect to target: ~p~n", [Reason])
+	end.
+
+forwarder(Socket1, Socket2) ->
+	Continue = receive
+		{ssl, Socket1, Data} ->
+			ssl:send(Socket2, Data),
+			log_contents(sent, Data),
+			true;
+		{ssl, Socket2, Data} ->
+			ssl:send(Socket1, Data),
+			log_contents(received, Data),
+			true;
+		{ssl_closed, Socket1} -> ssl:close(Socket2), false;
+		{ssl_closed, Socket2} -> ssl:close(Socket1), false;
+		{ssl_error, S, _} when S =:= Socket1; S =:= Socket2 -> false;
+		Other -> io:format("Unexpected message: ~p\n", [Other]), true
+	end,
+	case Continue of
+		true -> forwarder(Socket1, Socket2);
+		false -> ok
+	end.
+
+log_contents(Direction, Data) -> % TODO log contents
+	io:format("~p ~p bytes\n", [Direction, byte_size(Data)]).
 
 get_cert_for_host(Host, Certs) ->
 	case ets:lookup(Certs, Host) of
