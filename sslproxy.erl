@@ -35,7 +35,7 @@ acceptor(ProxyListenSock, Config) ->
 	ssl:send(SslSocket, <<"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n"
 		"Content-Length: 3\r\n\r\nfoo">>). % TODO connect to remote and bridge
 
-get_cert_for_host(Host, Certs) -> % TODO avoid cmd inject in host
+get_cert_for_host(Host, Certs) ->
 	case ets:lookup(Certs, Host) of
 		[C] -> C#cert.der;
 		[] ->
@@ -45,12 +45,18 @@ get_cert_for_host(Host, Certs) -> % TODO avoid cmd inject in host
 	end.
 
 gen_cert_for_host(Host) ->
+	validate_hostname(Host),
 	CertCommand = "openssl req -new -key " ?PRIV_KEY_FILE " -batch "
 			"-subj \"/CN=" ++ Host ++ "/OU=SSL Proxy/O=SSL Proxy/C=HU/\" "
 			"| openssl x509 -req -days 3650 -CA " ?CA_CERT_FILE
 			" -CAkey " ?CA_KEY_FILE " -CAcreateserial -outform DER 2>/dev/null",
 	Port = erlang:open_port({spawn, CertCommand}, [exit_status, binary]),
 	collect_cert(Port).
+
+validate_hostname([]) -> ok;
+validate_hostname([Char | Rest]) when (Char >= $0 andalso Char =< $9);
+	  (Char >= $A andalso Char =< $Z); (Char >= $a andalso Char =< $z);
+	  Char =:= $.; Char =:= $- -> validate_hostname(Rest).
 
 collect_cert(Port) -> collect_cert(Port, <<>>).
 collect_cert(Port, Acc) ->
