@@ -6,6 +6,8 @@
 -define(CA_CERT_FILE, "burpcert-fixed.pem").
 -define(PRIV_KEY_FILE, "mitmkey.pem").
 
+-define(DLT_RAW, 101).
+
 -record(cert, {cn, der}).
 
 start() ->
@@ -36,21 +38,34 @@ acceptor(ProxyListenSock) ->
 	case ssl:connect(Host, Port, [{verify, verify_none}, {packet, raw},
 								  {active, true}, {mode, binary}]) of
 		{ok, TargetSock} ->
+			calc_ip_headers(SslSocket, TargetSock),
+			{ok, PcapFd} = pcap_writer:open("/tmp/output.pcap", 65535, ?DLT_RAW),
+			put(pcap_fd, PcapFd),
 			{ok, Data} = ssl:recv(SslSocket, 0), % XXX
 			self() ! {ssl, SslSocket, Data},
 			forwarder(SslSocket, TargetSock);
 		{error, Reason} -> io:format("Couldn't connect to target: ~p~n", [Reason])
 	end.
 
+calc_ip_headers(Client, Server) ->
+	{CA, CP} = peername_bin(Client),
+	{SA, SP} = peername_bin(Server),
+	put({Client, Server}, {<<16#40, 0, 64, 6, 0, 0, CA/binary, SA/binary,
+							 CP/binary, SP/binary>>, 0, 0}),
+	put({Server, Client}, {<<16#40, 0, 64, 6, 0, 0, SA/binary, CA/binary,
+							 SP/binary, CP/binary>>, 0, 0}).
+
+peername_bin(Socket) ->
+	{ok, {{A, B, C, D}, Port}} = ssl:peername(Socket),
+	{<<A, B, C, D>>, <<Port:16>>}.
+
 forwarder(Socket1, Socket2) ->
 	Continue = receive
 		{ssl, Socket1, Data} ->
-			ssl:send(Socket2, Data),
-			log_contents(sent, Data),
+			relay_data(Socket1, Socket2, Data),
 			true;
 		{ssl, Socket2, Data} ->
-			ssl:send(Socket1, Data),
-			log_contents(received, Data),
+			relay_data(Socket2, Socket1, Data),
 			true;
 		{ssl_closed, Socket1} -> ssl:close(Socket2), false;
 		{ssl_closed, Socket2} -> ssl:close(Socket1), false;
@@ -59,11 +74,18 @@ forwarder(Socket1, Socket2) ->
 	end,
 	case Continue of
 		true -> forwarder(Socket1, Socket2);
-		false -> ok
+		false -> pcap_writer:close(get(pcap_fd)), ok
 	end.
 
-log_contents(Direction, Data) -> % TODO log contents
-	io:format("~p ~p bytes\n", [Direction, byte_size(Data)]).
+relay_data(From, To, Data) ->
+	ssl:send(To, Data),
+	{IpAddrsTcpPorts, Ident, Seq} = get({From, To}),
+	{_, _, Ack} = get({To, From}),
+	put({From, To}, {IpAddrsTcpPorts, Ident + 1, Seq + byte_size(Data)}),
+	Packet = <<16#45, 0, (byte_size(Data) + 40):16/integer-big,
+			   Ident:16/integer-big, IpAddrsTcpPorts/binary,
+			   Seq:32/integer-big, Ack:32, 16#50, 8, 16#FFFF:16, 0:32, Data/binary>>,
+	pcap_writer:write_packet(get(pcap_fd), Packet).
 
 get_cert_for_host(Host, Certs) ->
 	case ets:lookup(Certs, Host) of
