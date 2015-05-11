@@ -28,7 +28,6 @@ acceptor(ProxyListenSock) ->
     ets:give_away(Certs, Heir, undefined),
     gen_tcp:controlling_process(ProxyListenSock, Heir),
     {Host, Port} = get_target(Sock),
-    io:format("HOST: ~p PORT: ~p\n", [Host, Port]),
     inet:setopts(Sock, [{packet, raw}]),
     gen_tcp:send(Sock, <<"HTTP/1.1 200 Connection established\r\n"
                          "Proxy-agent: sslproxy\r\n\r\n">>),
