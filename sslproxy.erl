@@ -20,12 +20,14 @@ start() ->
     acceptor(ProxyListenSock).
 
 acceptor(ProxyListenSock) ->
-    Certs = receive
-        {'ETS-TRANSFER', C, Parent, undefined} when is_pid(Parent) -> C
-    after 0 -> ets:new(certs, [{keypos, #cert.cn}, public]) end,
+    {PcapFd, Certs} = receive
+        {'ETS-TRANSFER', C, Parent, P} when is_pid(Parent) -> {P, C}
+    after 0 ->
+        {open_pcap_file(), ets:new(certs, [{keypos, #cert.cn}, public])}
+    end,
     {ok, Sock} = gen_tcp:accept(ProxyListenSock),
     Heir = spawn(?MODULE, acceptor, [ProxyListenSock]),
-    ets:give_away(Certs, Heir, undefined),
+    ets:give_away(Certs, Heir, PcapFd),
     gen_tcp:controlling_process(ProxyListenSock, Heir),
     {Host, Port} = get_target(Sock),
     inet:setopts(Sock, [{packet, raw}]),
@@ -38,13 +40,19 @@ acceptor(ProxyListenSock) ->
                                   {active, true}, {mode, binary}]) of
         {ok, TargetSock} ->
             calc_ip_headers(SslSocket, TargetSock),
-            {ok, PcapFd} = pcap_writer:open("/tmp/output.pcap", 65535, ?DLT_RAW),
             put(pcap_fd, PcapFd),
             {ok, Data} = ssl:recv(SslSocket, 0), % XXX
             self() ! {ssl, SslSocket, Data},
             forwarder(SslSocket, TargetSock);
         {error, Reason} -> io:format("Couldn't connect to target: ~p~n", [Reason])
     end.
+
+open_pcap_file() ->
+    PcapFile = lists:append(["/tmp/sslproxy-", os:getpid(), "-",
+            base64:encode_to_string(term_to_binary(now())), ".pcap"]),
+    {ok, P} = pcap_writer:open(PcapFile, 65535, ?DLT_RAW),
+    io:format("Opened PCAP output file ~s~n", [PcapFile]),
+    P.
 
 calc_ip_headers(Client, Server) ->
     {CA, CP} = peername_bin(Client),
@@ -73,7 +81,7 @@ forwarder(Socket1, Socket2) ->
     end,
     case Continue of
         true -> forwarder(Socket1, Socket2);
-        false -> pcap_writer:close(get(pcap_fd)), ok
+        false -> ok
     end.
 
 relay_data(From, To, Data) ->
