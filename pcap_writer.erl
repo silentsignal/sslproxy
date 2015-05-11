@@ -9,7 +9,7 @@
 
 open(Filename, SnapLength, DataLinkType)
   when is_integer(SnapLength), is_integer(DataLinkType) ->
-    case file:open(Filename, [write, delayed_write]) of
+    case file:open(Filename, [write]) of
         {ok, IoDevice} ->
             write_header(IoDevice, SnapLength, DataLinkType),
             {ok, #pcap_fd{io_dev=IoDevice}};
