@@ -89,9 +89,8 @@ relay_data(From, To, Data) ->
     {IpAddrsTcpPorts, Ident, Seq} = get({From, To}),
     {_, _, Ack} = get({To, From}),
     put({From, To}, {IpAddrsTcpPorts, Ident + 1, Seq + byte_size(Data)}),
-    Packet = <<16#45, 0, (byte_size(Data) + 40):16/integer-big,
-               Ident:16/integer-big, IpAddrsTcpPorts/binary,
-               Seq:32/integer-big, Ack:32, 16#50, 8, 16#FFFF:16, 0:32, Data/binary>>,
+    Packet = <<16#45, 0, (byte_size(Data) + 40):16, Ident:16, IpAddrsTcpPorts/binary,
+               Seq:32, Ack:32, 16#50, 8, 16#FFFF:16, 0:32, Data/binary>>,
     pcap_writer:write_packet(get(pcap_fd), Packet).
 
 get_cert_for_host(Host, Certs) ->
