@@ -39,12 +39,20 @@ acceptor(ProxyListenSock) ->
     case ssl:connect(Host, Port, [{verify, verify_none}, {packet, raw},
                                   {active, true}, {mode, binary}]) of
         {ok, TargetSock} ->
-            calc_ip_headers(SslSocket, TargetSock),
-            put(pcap_fd, PcapFd),
-            {ok, Data} = ssl:recv(SslSocket, 0), % XXX
-            self() ! {ssl, SslSocket, Data},
-            forwarder(SslSocket, TargetSock);
-        {error, Reason} -> io:format("Couldn't connect to target: ~p~n", [Reason])
+            case ssl:recv(SslSocket, 0) of
+                {ok, Data} ->
+                    put(pcap_fd, PcapFd),
+                    calc_ip_headers(SslSocket, TargetSock),
+                    self() ! {ssl, SslSocket, Data},
+                    forwarder(SslSocket, TargetSock);
+                {error, Reason} ->
+                    io:format("Couldn't receive from client: ~p~n", [Reason]),
+                    ssl:close(SslSocket),
+                    ssl:close(TargetSock)
+            end;
+        {error, Reason} ->
+            io:format("Couldn't connect to target: ~p~n", [Reason]),
+            ssl:close(SslSocket)
     end.
 
 open_pcap_file() ->
