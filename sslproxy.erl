@@ -135,7 +135,7 @@ gen_cert_for_host(Host) ->
     Subject = [[#'AttributeTypeAndValue'{type=?'id-at-commonName',
                                          value={utf8String, list_to_binary(Host)}}]],
     LeafCert = CACert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'{
-                  serialNumber=42, % XXX
+                  serialNumber=erlang:unique_integer([positive]),
                   signature=#'SignatureAlgorithm'{algorithm=?'sha256WithRSAEncryption',
                                                   parameters='NULL'},
                   validity=#'Validity'{notBefore={generalTime, NotBefore},
