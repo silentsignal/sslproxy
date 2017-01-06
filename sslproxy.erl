@@ -36,8 +36,7 @@ acceptor(ProxyListenSock) ->
     {ok, SslSocket} = ssl:ssl_accept(Sock, [{cert, get_cert_for_host(Host, Certs)},
                                             {keyfile, ?PRIV_KEY_FILE},
                                             {active, true}, {packet, raw}]),
-    case ssl:connect(Host, Port, [{verify, verify_none}, {packet, raw},
-                                  {active, true}, {mode, binary}]) of
+    case ssl_connect_with_fallback(Host, Port) of
         {ok, TargetSock} ->
             case ssl:recv(SslSocket, 0) of
                 {ok, Data} ->
@@ -53,6 +52,18 @@ acceptor(ProxyListenSock) ->
         {error, Reason} ->
             io:format("Couldn't connect to target: ~p~n", [Reason]),
             ssl:close(SslSocket)
+    end.
+
+ssl_connect_with_fallback(Host, Port) ->
+    Versions = proplists:get_value(available, ssl:versions()),
+    ssl_connect_with_fallback(Host, Port, Versions, false, unknown).
+ssl_connect_with_fallback(_, _, [], _, Error) -> Error;
+ssl_connect_with_fallback(Host, Port, Versions, Fallback, _) ->
+    Options = [{verify, verify_none}, {packet, raw}, {active, true},
+               {mode, binary}, {versions, Versions}, {fallback, Fallback}],
+    case ssl:connect(Host, Port, Options) of
+        {ok, _} = R -> R;
+        {error, _} = R -> ssl_connect_with_fallback(Host, Port, tl(Versions), true, R)
     end.
 
 open_pcap_file() ->
