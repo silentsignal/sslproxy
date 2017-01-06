@@ -49,7 +49,7 @@ acceptor(ProxyListenSock) ->
 
 open_pcap_file() ->
     PcapFile = lists:append(["/tmp/sslproxy-", os:getpid(), "-",
-            base64:encode_to_string(term_to_binary(erlang:system_time(native))), ".pcap"]),
+            base64:encode_to_string(term_to_binary(erlang:timestamp())), ".pcap"]),
     {ok, P} = pcap_writer:open(PcapFile, 65535, ?DLT_RAW),
     io:format("Opened PCAP output file ~s~n", [PcapFile]),
     P.
