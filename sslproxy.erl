@@ -123,26 +123,26 @@ get_cert_for_host(Host, Certs) ->
     end.
 
 gen_cert_for_host(Host) ->
-	{ok, PemBin} = file:read_file(?CA_CERT_FILE),
-	[{'Certificate', DER, not_encrypted} | _] = public_key:pem_decode(PemBin),
-	{ok, KPemBin} = file:read_file(?CA_KEY_FILE),
-	[{'RSAPrivateKey' = T, RSA, not_encrypted} | _] = public_key:pem_decode(KPemBin),
-	Key = public_key:der_decode(T, RSA),
-	CACert = public_key:pkix_decode_cert(DER, otp),
-	{Y, M, D} = date(),
-	NotBefore = lists:flatten(io_lib:format("~w~2..0w~2..0w000000Z", [Y, M, D])),
-	NotAfter  = lists:flatten(io_lib:format("~w~2..0w~2..0w000000Z", [Y + 10, M, D])),
-	Subject = [[#'AttributeTypeAndValue'{type=?'id-at-commonName',
-										 value={utf8String, list_to_binary(Host)}}]],
-	LeafCert = CACert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'{
-				  serialNumber=42, % XXX
-				  signature=#'SignatureAlgorithm'{algorithm=?'sha256WithRSAEncryption',
-												  parameters='NULL'},
-				  validity=#'Validity'{notBefore={generalTime, NotBefore},
-									   notAfter ={generalTime, NotAfter}},
-				  subject={rdnSequence, Subject}
-				 },
-	public_key:pkix_sign(LeafCert, Key).
+    {ok, PemBin} = file:read_file(?CA_CERT_FILE),
+    [{'Certificate', DER, not_encrypted} | _] = public_key:pem_decode(PemBin),
+    {ok, KPemBin} = file:read_file(?CA_KEY_FILE),
+    [{'RSAPrivateKey' = T, RSA, not_encrypted} | _] = public_key:pem_decode(KPemBin),
+    Key = public_key:der_decode(T, RSA),
+    CACert = public_key:pkix_decode_cert(DER, otp),
+    {Y, M, D} = date(),
+    NotBefore = lists:flatten(io_lib:format("~w~2..0w~2..0w000000Z", [Y, M, D])),
+    NotAfter  = lists:flatten(io_lib:format("~w~2..0w~2..0w000000Z", [Y + 10, M, D])),
+    Subject = [[#'AttributeTypeAndValue'{type=?'id-at-commonName',
+                                         value={utf8String, list_to_binary(Host)}}]],
+    LeafCert = CACert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'{
+                  serialNumber=42, % XXX
+                  signature=#'SignatureAlgorithm'{algorithm=?'sha256WithRSAEncryption',
+                                                  parameters='NULL'},
+                  validity=#'Validity'{notBefore={generalTime, NotBefore},
+                                       notAfter ={generalTime, NotAfter}},
+                  subject={rdnSequence, Subject}
+                 },
+    public_key:pkix_sign(LeafCert, Key).
 
 get_target(Sock) ->
     {ok, Request} = gen_tcp:recv(Sock, 0),
