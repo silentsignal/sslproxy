@@ -18,7 +18,6 @@ The four `-define` clauses at the top of `sslproxy.erl` should be edited.
 
  - `LISTEN_PORT` is the TCP port to listen on
  - `CA_KEY_FILE` and `CA_CERT_FILE` are the private key and certificate of a CA that is accepted by the clients to be attacked with MITM, both in PEM format
- - `PRIV_KEY_FILE` is a private key in PEM format that will be used for the per-domain certificates
 
 Building
 --------

@@ -4,9 +4,10 @@
 -define(LISTEN_PORT, 8083).
 -define(CA_KEY_FILE, "burpkey.pem").
 -define(CA_CERT_FILE, "burpcert-fixed.pem").
--define(PRIV_KEY_FILE, "mitmkey.pem").
 
 -define(DLT_RAW, 101).
+
+-include_lib("public_key/include/public_key.hrl").
 
 -record(cert, {cn, der}).
 
@@ -34,7 +35,7 @@ acceptor(ProxyListenSock) ->
     gen_tcp:send(Sock, <<"HTTP/1.1 200 Connection established\r\n"
                          "Proxy-agent: sslproxy\r\n\r\n">>),
     {ok, SslSocket} = ssl:ssl_accept(Sock, [{cert, get_cert_for_host(Host, Certs)},
-                                            {keyfile, ?PRIV_KEY_FILE},
+                                            {keyfile, ?CA_KEY_FILE},
                                             {active, true}, {packet, raw}]),
     case ssl_connect_with_fallback(Host, Port) of
         {ok, TargetSock} ->
@@ -122,27 +123,26 @@ get_cert_for_host(Host, Certs) ->
     end.
 
 gen_cert_for_host(Host) ->
-    validate_hostname(Host),
-    CertCommand = "openssl req -new -key " ?PRIV_KEY_FILE " -batch "
-            "-subj \"/CN=" ++ Host ++ "/OU=SSL Proxy/O=SSL Proxy/C=HU/\" "
-            "| openssl x509 -req -days 3650 -CA " ?CA_CERT_FILE
-            " -CAkey " ?CA_KEY_FILE " -CAcreateserial -outform DER 2>/dev/null",
-    Port = erlang:open_port({spawn, CertCommand}, [exit_status, binary]),
-    Cert = collect_cert(Port),
-    receive {'EXIT', Port, normal} -> Cert end.
-
-validate_hostname([]) -> ok;
-validate_hostname([Char | Rest]) when (Char >= $0 andalso Char =< $9);
-      (Char >= $A andalso Char =< $Z); (Char >= $a andalso Char =< $z);
-      Char =:= $.; Char =:= $- -> validate_hostname(Rest).
-
-collect_cert(Port) -> collect_cert(Port, <<>>).
-collect_cert(Port, Acc) ->
-    receive
-        {Port, {data, D}} -> collect_cert(Port, <<Acc/binary, D/binary>>);
-        {Port, {exit_status, 0}} -> Acc;
-        {Port, {exit_status, _}} -> throw({openssl_cert_gen_failed, Acc})
-    end.
+	{ok, PemBin} = file:read_file(?CA_CERT_FILE),
+	[{'Certificate', DER, not_encrypted} | _] = public_key:pem_decode(PemBin),
+	{ok, KPemBin} = file:read_file(?CA_KEY_FILE),
+	[{'RSAPrivateKey' = T, RSA, not_encrypted} | _] = public_key:pem_decode(KPemBin),
+	Key = public_key:der_decode(T, RSA),
+	CACert = public_key:pkix_decode_cert(DER, otp),
+	{Y, M, D} = date(),
+	NotBefore = lists:flatten(io_lib:format("~w~2..0w~2..0w000000Z", [Y, M, D])),
+	NotAfter  = lists:flatten(io_lib:format("~w~2..0w~2..0w000000Z", [Y + 10, M, D])),
+	Subject = [[#'AttributeTypeAndValue'{type=?'id-at-commonName',
+										 value={utf8String, list_to_binary(Host)}}]],
+	LeafCert = CACert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'{
+				  serialNumber=42, % XXX
+				  signature=#'SignatureAlgorithm'{algorithm=?'sha256WithRSAEncryption',
+												  parameters='NULL'},
+				  validity=#'Validity'{notBefore={generalTime, NotBefore},
+									   notAfter ={generalTime, NotAfter}},
+				  subject={rdnSequence, Subject}
+				 },
+	public_key:pkix_sign(LeafCert, Key).
 
 get_target(Sock) ->
     {ok, Request} = gen_tcp:recv(Sock, 0),
