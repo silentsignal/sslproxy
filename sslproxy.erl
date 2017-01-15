@@ -1,5 +1,5 @@
 -module(sslproxy).
--export([start/0, acceptor/1]).
+-export([start/0, acceptor/2]).
 
 -define(LISTEN_PORT, 8083).
 -define(CA_KEY_FILE, "burpkey.pem").
@@ -10,33 +10,49 @@
 -include_lib("public_key/include/public_key.hrl").
 
 -record(cert, {cn, der}).
+-record(rt_cfg, {ca_key_der, ca_key_decoded, ca_cert}).
 
 start() ->
-    application:start(crypto),
-    application:start(asn1),
-    application:start(public_key),
-    application:start(ssl),
-    {ok, ProxyListenSock} = gen_tcp:listen(?LISTEN_PORT, [binary,
-        {active, false}, {packet, http}, {reuseaddr, true}]),
-    acceptor(ProxyListenSock).
+	case file:consult("config.txt") of
+		{ok, Config} ->
+			application:start(crypto),
+			application:start(asn1),
+			application:start(public_key),
+			application:start(ssl),
+			ListenPort = proplists:get_value(listen_port, Config),
+			{ok, ProxyListenSock} = gen_tcp:listen(ListenPort, [binary,
+				{active, false}, {packet, http}, {reuseaddr, true}]),
+			{ok, PemBin} = file:read_file(proplists:get_value(ca_cert_file, Config)),
+			[{'Certificate', DER, not_encrypted} | _] = public_key:pem_decode(PemBin),
+			{ok, KPemBin} = file:read_file(proplists:get_value(ca_key_file, Config)),
+			[{'RSAPrivateKey' = T, RSA, not_encrypted} | _] = public_key:pem_decode(KPemBin),
+			Key = public_key:der_decode(T, RSA),
+			CACert = public_key:pkix_decode_cert(DER, otp),
+			RuntimeConfig = #rt_cfg{ca_key_der={T, RSA}, ca_key_decoded=Key, ca_cert=CACert},
+			acceptor(ProxyListenSock, RuntimeConfig);
+		{error, Reason} ->
+			io:format("Couldn't load config.txt: ~s~n", [file:format_error(Reason)])
+	end.
 
-acceptor(ProxyListenSock) ->
+acceptor(ProxyListenSock, Config) ->
     {PcapFd, Certs} = receive
         {'ETS-TRANSFER', C, Parent, P} when is_pid(Parent) -> {P, C}
     after 0 ->
         {open_pcap_file(), ets:new(certs, [{keypos, #cert.cn}, public])}
     end,
     {ok, Sock} = gen_tcp:accept(ProxyListenSock),
-    Heir = spawn(?MODULE, acceptor, [ProxyListenSock]),
+    Heir = spawn(?MODULE, acceptor, [ProxyListenSock, Config]),
     ets:give_away(Certs, Heir, PcapFd),
     gen_tcp:controlling_process(ProxyListenSock, Heir),
     {Host, Port} = get_target(Sock),
     inet:setopts(Sock, [{packet, raw}]),
     gen_tcp:send(Sock, <<"HTTP/1.1 200 Connection established\r\n"
                          "Proxy-agent: sslproxy\r\n\r\n">>),
-    {ok, SslSocket} = ssl:ssl_accept(Sock, [{cert, get_cert_for_host(Host, Certs)},
-                                            {keyfile, ?CA_KEY_FILE},
+    io:format("Sent response headers, accepting SSL for ~s...~n", [Host]),
+    {ok, SslSocket} = ssl:ssl_accept(Sock, [{cert, get_cert_for_host(Host, Certs, Config)},
+                                            {key, Config#rt_cfg.ca_key_der},
                                             {active, true}, {packet, raw}]),
+    io:format("Accepted SSL, connecting to ~s:~p~n", [Host, Port]),
     case ssl_connect_with_fallback(Host, Port) of
         {ok, TargetSock} ->
             case ssl:recv(SslSocket, 0) of
@@ -113,28 +129,22 @@ relay_data(From, To, Data) ->
                Seq:32, Ack:32, 16#50, 8, 16#FFFF:16, 0:32, Data/binary>>,
     pcap_writer:write_packet(get(pcap_fd), Packet).
 
-get_cert_for_host(Host, Certs) ->
+get_cert_for_host(Host, Certs, Config) ->
     case ets:lookup(Certs, Host) of
         [C] -> C#cert.der;
         [] ->
-            DER = gen_cert_for_host(Host),
+            DER = gen_cert_for_host(Host, Config),
             ets:insert(Certs, #cert{cn=Host, der=DER}),
             DER
     end.
 
-gen_cert_for_host(Host) ->
-    {ok, PemBin} = file:read_file(?CA_CERT_FILE),
-    [{'Certificate', DER, not_encrypted} | _] = public_key:pem_decode(PemBin),
-    {ok, KPemBin} = file:read_file(?CA_KEY_FILE),
-    [{'RSAPrivateKey' = T, RSA, not_encrypted} | _] = public_key:pem_decode(KPemBin),
-    Key = public_key:der_decode(T, RSA),
-    CACert = public_key:pkix_decode_cert(DER, otp),
+gen_cert_for_host(Host, Config) ->
     {Y, M, D} = date(),
     NotBefore = lists:flatten(io_lib:format("~w~2..0w~2..0w000000Z", [Y, M, D])),
     NotAfter  = lists:flatten(io_lib:format("~w~2..0w~2..0w000000Z", [Y + 10, M, D])),
     Subject = [[#'AttributeTypeAndValue'{type=?'id-at-commonName',
                                          value={utf8String, list_to_binary(Host)}}]],
-    LeafCert = CACert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'{
+    LeafCert = Config#rt_cfg.ca_cert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'{
                   serialNumber=erlang:unique_integer([positive]),
                   signature=#'SignatureAlgorithm'{algorithm=?'sha256WithRSAEncryption',
                                                   parameters='NULL'},
@@ -142,7 +152,7 @@ gen_cert_for_host(Host) ->
                                        notAfter ={generalTime, NotAfter}},
                   subject={rdnSequence, Subject}
                  },
-    public_key:pkix_sign(LeafCert, Key).
+    public_key:pkix_sign(LeafCert, Config#rt_cfg.ca_key_decoded).
 
 get_target(Sock) ->
     {ok, Request} = gen_tcp:recv(Sock, 0),

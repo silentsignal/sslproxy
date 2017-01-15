@@ -14,10 +14,10 @@ Dependencies
 Configuration
 -------------
 
-The four `-define` clauses at the top of `sslproxy.erl` should be edited.
+The file `config.txt` contains the configuration, which is read at startup.
 
- - `LISTEN_PORT` is the TCP port to listen on
- - `CA_KEY_FILE` and `CA_CERT_FILE` are the private key and certificate of a CA that is accepted by the clients to be attacked with MITM, both in PEM format
+ - `listen_port` is the TCP port to listen on
+ - `ca_key_file` and `ca_cert_file` are the private key and certificate of a CA that is accepted by the clients to be attacked with MITM, both in PEM format
 
 Building
 --------
