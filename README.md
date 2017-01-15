@@ -40,7 +40,6 @@ that went through the proxy.
 Known bugs and limitations
 --------------------------
 
- - Currently only the first session is saved in the PCAP file, this should be fixed.
  - Encrypted private keys are _NOT_ supported, PEM files should contain `-----BEGIN PRIVATE KEY-----`.
  - Erlang SSL/TLS implementations cannot handle X.509 certificates with a country field of more than two characters, both as a client and as a server. This unfortunately also means that Burp certificates with `PortSwigger` as their "country" cannot be used by this tool.
  - Only version 4 IP addresses are supported.
