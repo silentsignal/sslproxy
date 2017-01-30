@@ -50,6 +50,26 @@ acceptor(ProxyListenSock, Config) ->
                          "Proxy-agent: sslproxy\r\n\r\n">>),
     io:format("Sent response headers, accepting SSL for ~s...~n", [Host]),
     put(pcap_fd, PcapFd),
+    case should_mitm(Host, Port) of
+        true -> mitm_ssl(Sock, Host, Port, Certs, Config);
+        false -> passthrough(Sock, Host, Port)
+    end.
+
+should_mitm(Host, Port) -> true. % TODO #3
+
+passthrough(Sock, Host, Port) ->
+    inet:setopts(Sock, [{active, true}]),
+    io:format("Lettings SSL pass through, connecting to ~s:~p~n", [Host, Port]),
+    case gen_tcp:connect(Host, Port, [{packet, raw}, {active, true}, {mode, binary}]) of
+        {ok, TargetSock} ->
+            calc_ip_headers(Sock, TargetSock, inet),
+            forwarder(Sock, TargetSock);
+        {error, Reason} ->
+            io:format("Couldn't connect to target: ~p~n", [Reason]),
+            gen_tcp:close(Sock)
+    end.
+
+mitm_ssl(Sock, Host, Port, Certs, Config) ->
     {ok, SslSocket} = ssl:ssl_accept(Sock, [{cert, get_cert_for_host(Host, Certs, Config)},
                                             {key, Config#rt_cfg.ca_key_der},
                                             {active, true}, {packet, raw}]),
@@ -110,9 +130,18 @@ forwarder(Socket1, Socket2) ->
         {ssl, Socket2, Data} ->
             relay_data(Socket2, Socket1, Data, ssl),
             true;
+        {tcp, Socket1, Data} ->
+            relay_data(Socket1, Socket2, Data, gen_tcp),
+            true;
+        {tcp, Socket2, Data} ->
+            relay_data(Socket2, Socket1, Data, gen_tcp),
+            true;
         {ssl_closed, Socket1} -> ssl:close(Socket2), false;
         {ssl_closed, Socket2} -> ssl:close(Socket1), false;
+        {tcp_closed, Socket1} -> gen_tcp:close(Socket2), false;
+        {tcp_closed, Socket2} -> gen_tcp:close(Socket1), false;
         {ssl_error, S, _} when S =:= Socket1; S =:= Socket2 -> false;
+        {tcp_error, S, _} when S =:= Socket1; S =:= Socket2 -> false;
         Other -> io:format("Unexpected message: ~p\n", [Other]), true
     end,
     case Continue of
