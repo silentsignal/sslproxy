@@ -49,6 +49,7 @@ acceptor(ProxyListenSock, Config) ->
     gen_tcp:send(Sock, <<"HTTP/1.1 200 Connection established\r\n"
                          "Proxy-agent: sslproxy\r\n\r\n">>),
     io:format("Sent response headers, accepting SSL for ~s...~n", [Host]),
+    put(pcap_fd, PcapFd),
     {ok, SslSocket} = ssl:ssl_accept(Sock, [{cert, get_cert_for_host(Host, Certs, Config)},
                                             {key, Config#rt_cfg.ca_key_der},
                                             {active, true}, {packet, raw}]),
@@ -57,7 +58,6 @@ acceptor(ProxyListenSock, Config) ->
         {ok, TargetSock} ->
             case ssl:recv(SslSocket, 0) of
                 {ok, Data} ->
-                    put(pcap_fd, PcapFd),
                     calc_ip_headers(SslSocket, TargetSock, ssl),
                     self() ! {ssl, SslSocket, Data},
                     forwarder(SslSocket, TargetSock);
