@@ -10,7 +10,7 @@
 -include_lib("public_key/include/public_key.hrl").
 
 -record(cert, {cn, der}).
--record(rt_cfg, {ca_key_der, ca_key_decoded, ca_cert}).
+-record(rt_cfg, {ca_key_der, ca_key_decoded, ca_cert, passthrough}).
 
 start() ->
 	case file:consult("config.txt") of
@@ -28,11 +28,17 @@ start() ->
 			[{'RSAPrivateKey' = T, RSA, not_encrypted} | _] = public_key:pem_decode(KPemBin),
 			Key = public_key:der_decode(T, RSA),
 			CACert = public_key:pkix_decode_cert(DER, otp),
-			RuntimeConfig = #rt_cfg{ca_key_der={T, RSA}, ca_key_decoded=Key, ca_cert=CACert},
+			PT = lists:map(fun compile_pt_re/1, proplists:get_value(passthrough, Config, [])),
+			RuntimeConfig = #rt_cfg{ca_key_der={T, RSA}, ca_key_decoded=Key,
+				ca_cert=CACert, passthrough=PT},
 			acceptor(ProxyListenSock, RuntimeConfig);
 		{error, Reason} ->
 			io:format("Couldn't load config.txt: ~s~n", [file:format_error(Reason)])
 	end.
+
+compile_pt_re(Value) ->
+    {ok, RE} = re:compile(Value, [caseless]),
+    RE.
 
 acceptor(ProxyListenSock, Config) ->
     {PcapFd, Certs} = receive
