@@ -58,7 +58,7 @@ acceptor(ProxyListenSock, Config) ->
             case ssl:recv(SslSocket, 0) of
                 {ok, Data} ->
                     put(pcap_fd, PcapFd),
-                    calc_ip_headers(SslSocket, TargetSock),
+                    calc_ip_headers(SslSocket, TargetSock, ssl),
                     self() ! {ssl, SslSocket, Data},
                     forwarder(SslSocket, TargetSock);
                 {error, Reason} ->
@@ -90,25 +90,25 @@ open_pcap_file() ->
     io:format("Opened PCAP output file ~s~n", [PcapFile]),
     P.
 
-calc_ip_headers(Client, Server) ->
-    {CA, CP} = peername_bin(Client),
-    {SA, SP} = peername_bin(Server),
+calc_ip_headers(Client, Server, Module) ->
+    {CA, CP} = peername_bin(Client, Module),
+    {SA, SP} = peername_bin(Server, Module),
     put({Client, Server}, {<<16#40, 0, 64, 6, 0, 0, CA/binary, SA/binary,
                              CP/binary, SP/binary>>, 0, 0}),
     put({Server, Client}, {<<16#40, 0, 64, 6, 0, 0, SA/binary, CA/binary,
                              SP/binary, CP/binary>>, 0, 0}).
 
-peername_bin(Socket) ->
-    {ok, {{A, B, C, D}, Port}} = ssl:peername(Socket),
+peername_bin(Socket, Module) ->
+    {ok, {{A, B, C, D}, Port}} = Module:peername(Socket),
     {<<A, B, C, D>>, <<Port:16>>}.
 
 forwarder(Socket1, Socket2) ->
     Continue = receive
         {ssl, Socket1, Data} ->
-            relay_data(Socket1, Socket2, Data),
+            relay_data(Socket1, Socket2, Data, ssl),
             true;
         {ssl, Socket2, Data} ->
-            relay_data(Socket2, Socket1, Data),
+            relay_data(Socket2, Socket1, Data, ssl),
             true;
         {ssl_closed, Socket1} -> ssl:close(Socket2), false;
         {ssl_closed, Socket2} -> ssl:close(Socket1), false;
@@ -120,8 +120,8 @@ forwarder(Socket1, Socket2) ->
         false -> ok
     end.
 
-relay_data(From, To, Data) ->
-    ssl:send(To, Data),
+relay_data(From, To, Data, Module) ->
+    Module:send(To, Data),
     {IpAddrsTcpPorts, Ident, Seq} = get({From, To}),
     {_, _, Ack} = get({To, From}),
     put({From, To}, {IpAddrsTcpPorts, Ident + 1, Seq + byte_size(Data)}),
