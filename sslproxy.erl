@@ -56,12 +56,14 @@ acceptor(ProxyListenSock, Config) ->
                          "Proxy-agent: sslproxy\r\n\r\n">>),
     io:format("Sent response headers, accepting SSL for ~s...~n", [Host]),
     put(pcap_fd, PcapFd),
-    case should_mitm(Host, Port) of
+    case should_mitm(Host, Port, Config#rt_cfg.passthrough) of
         true -> mitm_ssl(Sock, Host, Port, Certs, Config);
         false -> passthrough(Sock, Host, Port)
     end.
 
-should_mitm(Host, Port) -> true. % TODO #3
+should_mitm(Host, Port, PTL) ->
+    Subject = [Host, $:, integer_to_list(Port)],
+    lists:all(fun (RE) -> re:run(Subject, RE) =:= nomatch end, PTL).
 
 passthrough(Sock, Host, Port) ->
     inet:setopts(Sock, [{active, true}]),
