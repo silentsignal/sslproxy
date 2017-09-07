@@ -52,8 +52,7 @@ acceptor(ProxyListenSock, Config) ->
     gen_tcp:controlling_process(ProxyListenSock, Heir),
     {Host, Port} = get_target(Sock),
     inet:setopts(Sock, [{packet, raw}]),
-    gen_tcp:send(Sock, <<"HTTP/1.1 200 Connection established\r\n"
-                         "Proxy-agent: sslproxy\r\n\r\n">>),
+    gen_tcp:send(Sock, <<"HTTP/1.1 200 Connection established\r\n\r\n">>),
     io:format("Sent response headers, accepting SSL for ~s...~n", [Host]),
     put(pcap_fd, PcapFd),
     case should_mitm(Host, Port, Config#rt_cfg.passthrough) of
