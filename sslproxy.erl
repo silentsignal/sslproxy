@@ -105,7 +105,11 @@ ssl_connect_with_fallback(_, _, [], _, Error) -> Error;
 ssl_connect_with_fallback(Host, Port, Versions, Fallback, _) ->
     Options = [{verify, verify_none}, {packet, raw}, {active, true},
                {mode, binary}, {versions, Versions}, {fallback, Fallback}],
-    case ssl:connect(Host, Port, Options) of
+	ConHost = case inet:parse_address(Host) of
+		{ok, IP} -> IP;
+		_ -> Host
+	end,
+    case ssl:connect(ConHost, Port, Options) of
         {ok, _} = R -> R;
         {error, _} = R -> ssl_connect_with_fallback(Host, Port, tl(Versions), true, R)
     end.
