@@ -11,7 +11,10 @@ clone(CertPemFileName, KeyPemFileName, DerOutFileName) ->
 	Key = public_key:der_decode(T, RSA),
 	Cert = public_key:pkix_decode_cert(DER, otp),
 	#'RSAPrivateKey'{modulus = Mod, publicExponent = Exp} = Key,
-	NewLeafCertSPKI = Cert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'.subjectPublicKeyInfo#'OTPSubjectPublicKeyInfo'{subjectPublicKey = #'RSAPublicKey'{modulus = Mod, publicExponent = Exp}},
-	NewLeafCert = Cert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'{subjectPublicKeyInfo = NewLeafCertSPKI},
-	NewDER = public_key:pkix_sign(NewLeafCert, Key),
-	file:write_file(DerOutFileName, NewDER).
+	NewLeafCertSPKI = Cert#'OTPCertificate'.tbsCertificate
+		#'OTPTBSCertificate'.subjectPublicKeyInfo
+		#'OTPSubjectPublicKeyInfo'{
+		   subjectPublicKey = #'RSAPublicKey'{modulus = Mod, publicExponent = Exp}},
+	NewLeafCert = Cert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'{
+		subjectPublicKeyInfo = NewLeafCertSPKI},
+	file:write_file(DerOutFileName, public_key:pkix_sign(NewLeafCert, Key)).
